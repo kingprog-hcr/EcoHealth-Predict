@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException, status, Body
 from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -7,12 +8,27 @@ from app.models import User, SensorData
 from app.schemas import UserCreate, UserResponse, SensorDataCreate, SensorDataResponse
 from app.auth import get_password_hash, verify_password, create_access_token,create_refresh_token, decode_token, get_current_user
 
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
 
 #ajouter des favicon
 app = FastAPI(
     title="EcoHealth Predict API",
     version="1.0.0",
     description="API de gestion de télémétrie et de prédictions santé/énergie"
+)
+
+raw_origins = os.getenv("ALLOWED_ORIGINS", "*")
+origins = [origin.strip() for origin in raw_origins.split(",")]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 @app.get("/")
