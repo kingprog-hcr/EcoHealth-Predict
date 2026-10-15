@@ -1,8 +1,13 @@
 from fastapi import FastAPI, Depends, HTTPException, status, Body
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
+from fastapi import Request
 
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User, SensorData
 from app.schemas import UserCreate, UserResponse, SensorDataCreate, SensorDataResponse
@@ -13,12 +18,19 @@ import os
 
 load_dotenv()
 
+# 1. Création du limiteur basé sur l'adresse IP du client
+limiter = Limiter(key_func=get_remote_address)
+
 #ajouter des favicon
 app = FastAPI(
     title="EcoHealth Predict API",
     version="1.0.0",
     description="API de gestion de télémétrie et de prédictions santé/énergie"
 )
+
+# 2. Liaison du limiteur à l'état de l'application FastAPI
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 raw_origins = os.getenv("ALLOWED_ORIGINS", "*")
 origins = [origin.strip() for origin in raw_origins.split(",")]
@@ -30,6 +42,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+
 
 @app.get("/")
 def read_root():
@@ -71,8 +86,13 @@ def register_user(user_data: UserCreate, db: Session = Depends(get_db)) -> UserR
     
 
 @app.post("/api/v1/auth/login")
-def connect_user( form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)) -> dict:
-    
+@limiter.limit("5/minute")
+def connect_user(
+    request: Request,
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db)
+) -> dict:
+
     detail = "Email ou mot de passe incorrect"
     
     user = db.query(User).filter(User.email == form_data.username).first()
@@ -124,7 +144,9 @@ def refresh_token(refresh_token: str = Body(..., embed=True), db: Session = Depe
 # Gestion des routes de la telemetrie :
 
 @app.post("/api/v1/telemetry/push", response_model=SensorDataResponse)
+@limiter.limit("60/minute")
 def push_telemetry(
+    request : Request,
     data: SensorDataCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
