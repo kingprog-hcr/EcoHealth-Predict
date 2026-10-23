@@ -31,5 +31,15 @@ services:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
     depends_on:
       - db
+  c_simulator: 
+    build: ./c_simulator
+    container_name: ecohealth_simulator
+    restart: on-failure 
+    environment: 
+      API_URL: http://backend:8000 
+      SIMULATOR_EMAIL: ${SIMULATOR_EMAIL}
+      SIMULATOR_PASSWORD: ${SIMULATOR_PASSWORD}
+    depends_on:
+      - backend
 volumes:
   pgdata:
