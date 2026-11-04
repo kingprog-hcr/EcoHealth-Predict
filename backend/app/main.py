@@ -9,26 +9,30 @@ from slowapi.errors import RateLimitExceeded
 
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import User, SensorData
-from app.schemas import UserCreate, UserResponse, SensorDataCreate, SensorDataResponse
+from app.models import User, SensorData, Alert
+from app.schemas import UserCreate, UserResponse, SensorDataCreate, SensorDataResponse, AlertResponse, TelemetryPushResponse
 from app.auth import get_password_hash, verify_password, create_access_token,create_refresh_token, decode_token, get_current_user
+
+import pandas as pd
+from ml.engine import calculate_user_baseline, evaluate_telemetry
+
 
 from dotenv import load_dotenv
 import os
 
 load_dotenv()
 
-# 1. Création du limiteur basé sur l'adresse IP du client
+# 1Création du limiteur basé sur l'adresse IP du client
 limiter = Limiter(key_func=get_remote_address)
 
-#ajouter des favicon
+# note : ajouter des favicon
 app = FastAPI(
     title="EcoHealth Predict API",
     version="1.0.0",
     description="API de gestion de télémétrie et de prédictions santé/énergie"
 )
 
-# 2. Liaison du limiteur à l'état de l'application FastAPI
+# Liaison du limiteur à l'état de l'application FastAPI
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -42,8 +46,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
 
 
 @app.get("/")
@@ -115,7 +117,7 @@ def read_users_me(current_user: User = Depends(get_current_user)):
 
 @app.post("/api/v1/auth/refresh")
 def refresh_token(refresh_token: str = Body(..., embed=True), db: Session = Depends(get_db)):
-    # 1. Décodage et vérification de la signature / expiration
+    # Décodage et vérification de la signature / expiration
     payload = decode_token(refresh_token)
     
     if not payload:
@@ -143,24 +145,75 @@ def refresh_token(refresh_token: str = Body(..., embed=True), db: Session = Depe
 
 # Gestion des routes de la telemetrie :
 
-@app.post("/api/v1/telemetry/push", response_model=SensorDataResponse)
+@app.post("/api/v1/telemetry/push", response_model=TelemetryPushResponse)
 @limiter.limit("60/minute")
 def push_telemetry(
-    request : Request,
+    request: Request,
     data: SensorDataCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    """Enregistre une nouvelle mesure de télémétrie, évalue la dérive biomédicale 
+    par rapport à la baseline du patient et enregistre une alerte si nécessaire.
+    """
+    # Sauvegarde systématique de la nouvelle mesure en base de données
     new_measure = SensorData(
         user_id=current_user.id,
         bpm=data.bpm,
         spo2=data.spo2,
-        temperature=data.temperature
+        temperature=data.temperature,
+        contexte=data.contexte
     )
     db.add(new_measure)
     db.commit()
-    db.refresh(new_measure)
-    return new_measure
+    db.refresh(new_measure)  #
+
+    # Récupération de l'historique complet des mesures du patient
+    history = db.query(SensorData).filter(SensorData.user_id == current_user.id).all()
+
+    #  Gestion du Cold Start (historique insuffisant pour calculer un Z-Score fiable)
+    if len(history) < 5:
+        return TelemetryPushResponse(
+            measure=new_measure,
+            is_anomaly=False,
+            anomalies=[]
+        )
+
+    # Conversion de l'historique SQLAlchemy en DataFrame Pandas
+    df = pd.DataFrame([
+        {
+            "patient_id": str(m.user_id),
+            "bpm": m.bpm,
+            "spo2": m.spo2,
+            "temperature": float(m.temperature),
+            "context": m.contexte
+        }
+        for m in history
+    ])
+
+    # Calcul de la baseline au repos et évaluation biomédicale en temps réel
+    baseline = calculate_user_baseline(df, str(current_user.id))
+    anomalies = evaluate_telemetry(baseline, data.bpm, data.spo2, data.temperature)
+
+    # Si des anomalies sont détectées, création et stockage de l'alerte
+    if anomalies:
+        anomalies_str = ",".join(anomalies)  # Conversion en str
+        alert = Alert(
+            user_id=current_user.id,
+            sensor_data_id=new_measure.id,  # Clé étrangère vers la mesure enregistrée
+            anomalies=anomalies_str,
+            is_confirmed=False
+        )
+        db.add(alert)
+        db.commit()
+        db.refresh(alert)
+
+    # Retour au client (Boîtier C / Frontend)
+    return TelemetryPushResponse(
+        measure=new_measure,
+        is_anomaly=len(anomalies) > 0,
+        anomalies=anomalies
+    )
 
 @app.get("/api/v1/telemetry/history", response_model=list[SensorDataResponse])
 def get_telemetry_history(

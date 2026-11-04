@@ -159,8 +159,7 @@ int main(void){
                 // json
 
                 char json_payload[512];
-                snprintf(json_payload, sizeof(json_payload), "{\"bpm\": %u, \"spo2\": %.1f, \"temperature\": %.1f}", data_h.bpm, data_h.spO2, data_h.temperature);
-
+                snprintf(json_payload, sizeof(json_payload), "{\"bpm\": %u, \"spo2\": %.1f, \"temperature\": %.1f, \"contexte\" : \"rest\"}", data_h.bpm, data_h.spO2, data_h.temperature);
 
                 // jwt dans l'entete http
 
@@ -171,21 +170,55 @@ int main(void){
                 char auth_header[600];
                 snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", jwt_token);
                 headers = curl_slist_append(headers, auth_header);
+
+                // preparation du tampon de reponse
+
+                MemoryStruct response_chunk;
+                response_chunk.memory = malloc(1);
+                response_chunk.size = 0;
+
+                if (response_chunk.memory == NULL){
+                    fprintf(stderr, "Erreur d'allocation memoire\n");
+                    continue;
+                }
+                response_chunk.memory[0] = '\0';
+                
+                // configuration du cURL pour capturer la reponse
                 
                 curl_easy_setopt(curl, CURLOPT_URL, telemetry_url);
                 curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
                 curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_payload);
 
-                curl_easy_perform(curl); // execution
+                //indication de la fonction de callback
+
+                curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+                curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&response_chunk);
+
+                // execution de la requete http
 
                 CURLcode tele_res = curl_easy_perform(curl);
+
+                // analyse de la reponse du serveur
                 if ( tele_res == CURLE_OK){
                     printf("Télémétrie envoyée : %s\n", json_payload);
+
+                    // recherche des anomalies:
+
+                    if(strstr(response_chunk.memory, "\"is_anomaly\":true") != NULL || strstr(response_chunk.memory, "\"is_anomaly\": true") != NULL){ 
+
+                        // appel des fonction a creer ulterieuermen qui vont lancer l'alerte 
+                        printf("[ALERT IOT] Anomalies detectee\n");
+                        printf(" Détail réponse backend : %s\n", response_chunk.memory);
+                    }
+                    else{
+                        printf("[OK] Télémétrie enregistrée sans anomalie");
+                    }
                 }
                 else{
                     fprintf(stderr, "Erreur envoi télémétrie : %s\n", curl_easy_strerror(tele_res));
                 }
-
+                // Netotyage du tampon de memoire
+                free(response_chunk.memory);
                 curl_slist_free_all(headers); // liberation de l'URL
                 sleep(1);
             }

@@ -28,6 +28,7 @@ class SensorDataCreate(BaseModel):
     bpm: int
     spo2: int
     temperature: float
+    contexte : str =  "rest" 
 
 class SensorDataResponse(BaseModel):
     id: int
@@ -35,8 +36,25 @@ class SensorDataResponse(BaseModel):
     bpm: int
     spo2: int
     temperature: float
+    contexte : str
     recorded_at: datetime
 
+    class Config:
+        from_attributes = True
+        
+class TelemetryPushResponse(BaseModel):
+    measure : SensorDataResponse
+    is_anomaly : bool
+    anomalies : list[str]
+    
+class AlertResponse(BaseModel):
+    id : int
+    user_id : int
+    sensor_data_id : int
+    anomalies : list[str]
+    is_confirmed : bool | None = None
+    recorded_at : datetime
+    
     class Config:
         from_attributes = True
 

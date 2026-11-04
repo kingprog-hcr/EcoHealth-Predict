@@ -11,7 +11,7 @@ load_dotenv(dotenv_path=env_path)
 
 DB_USER = os.getenv("POSTGRES_USER", "admin") 
 DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "secret_password") #
-DB_HOST = os.getenv("DB_HOST", "localhost")  # 'localhost' pour le dev local, 'db' sous Docker
+DB_HOST = os.getenv("DB_HOST", "localhost") 
 DB_PORT = os.getenv("DB_PORT", "5432") 
 DB_NAME = os.getenv("POSTGRES_DB", "ecohealth_db") 
 
