@@ -149,12 +149,21 @@ int main(void){
 
             srand(time(NULL));
             health_t data_h;
-
+            int count = 0;
             while (1)
             {
+                count++;
+                if (count <= 10){
                 data_h.bpm =60 +  rand()%(41);
                 data_h.spO2 = 95.0 + ((float)rand() / (float)RAND_MAX) * (4.9);
                 data_h.temperature = 36.2 + ((float)rand() / (float)RAND_MAX) * (37.5-36.2);
+                    
+                }
+                else{
+                data_h.bpm = 145; // Tachycardie marquée 
+                data_h.spO2 = 89.0; // Hypoxie sévère 
+                data_h.temperature = 38.8; // Fièvre
+                }
 
                 // json
 
@@ -200,18 +209,22 @@ int main(void){
 
                 // analyse de la reponse du serveur
                 if ( tele_res == CURLE_OK){
-                    printf("Télémétrie envoyée : %s\n", json_payload);
-
-                    // recherche des anomalies:
-
-                    if(strstr(response_chunk.memory, "\"is_anomaly\":true") != NULL || strstr(response_chunk.memory, "\"is_anomaly\": true") != NULL){ 
-
-                        // appel des fonction a creer ulterieuermen qui vont lancer l'alerte 
-                        printf("[ALERT IOT] Anomalies detectee\n");
-                        printf(" Détail réponse backend : %s\n", response_chunk.memory);
+                    long response_code = 0;
+                    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+                    if (response_code < 200 || response_code >= 300) {
+                        fprintf(stderr, "Erreur HTTP lors de l'envoi (%ld) : %s\n",
+                                response_code, response_chunk.memory);
                     }
                     else{
-                        printf("[OK] Télémétrie enregistrée sans anomalie");
+                        printf("Télémétrie envoyée : %s\n", json_payload);
+
+                        if(strstr(response_chunk.memory, "\"is_anomaly\":true") != NULL || strstr(response_chunk.memory, "\"is_anomaly\": true") != NULL){
+                            printf("[ALERT IOT] Anomalies détectées\n");
+                            printf("Détail réponse backend : %s\n", response_chunk.memory);
+                        }
+                        else{
+                            printf("[OK] Télémétrie enregistrée sans anomalie\n");
+                        }
                     }
                 }
                 else{

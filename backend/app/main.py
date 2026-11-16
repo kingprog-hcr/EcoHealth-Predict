@@ -144,7 +144,6 @@ def refresh_token(refresh_token: str = Body(..., embed=True), db: Session = Depe
 
 
 # Gestion des routes de la telemetrie :
-
 @app.post("/api/v1/telemetry/push", response_model=TelemetryPushResponse)
 @limiter.limit("60/minute")
 def push_telemetry(
@@ -153,10 +152,17 @@ def push_telemetry(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Enregistre une nouvelle mesure de télémétrie, évalue la dérive biomédicale 
+    """
+    Enregistre une nouvelle mesure de télémétrie, évalue la dérive biomédicale 
     par rapport à la baseline du patient et enregistre une alerte si nécessaire.
     """
-    # Sauvegarde systématique de la nouvelle mesure en base de données
+    # Récupération de l'historique anterieur (avant l'insertion de la nouvelle mesure)
+    existing_history =(db.query(SensorData)
+                       .outerjoin(Alert, SensorData.id == Alert.sensor_data_id)
+                       .filter(SensorData.user_id == current_user.id)
+                       .filter(Alert.id == None) #filtre pour garder uniquement les valeurs saines
+                       .all() )
+    #  Sauvegarde systématique de la nouvelle mesure en BDD
     new_measure = SensorData(
         user_id=current_user.id,
         bpm=data.bpm,
@@ -166,54 +172,45 @@ def push_telemetry(
     )
     db.add(new_measure)
     db.commit()
-    db.refresh(new_measure)  #
+    db.refresh(new_measure)
 
-    # Récupération de l'historique complet des mesures du patient
-    history = db.query(SensorData).filter(SensorData.user_id == current_user.id).all()
+    # Calcul de la baseline au repos sur l'historique passé (si >= 5 mesures au repos)
+    baseline = None
+    if len(existing_history) >= 5:
+        df = pd.DataFrame([
+            {
+                "patient_id": str(m.user_id),
+                "bpm": m.bpm,
+                "spo2": m.spo2,
+                "temperature": float(m.temperature),
+                "context": m.contexte
+            }
+            for m in existing_history
+        ])
+        baseline = calculate_user_baseline(df, str(current_user.id))
 
-    #  Gestion du Cold Start (historique insuffisant pour calculer un Z-Score fiable)
-    if len(history) < 5:
-        return TelemetryPushResponse(
-            measure=new_measure,
-            is_anomaly=False,
-            anomalies=[]
-        )
-
-    # Conversion de l'historique SQLAlchemy en DataFrame Pandas
-    df = pd.DataFrame([
-        {
-            "patient_id": str(m.user_id),
-            "bpm": m.bpm,
-            "spo2": m.spo2,
-            "temperature": float(m.temperature),
-            "context": m.contexte
-        }
-        for m in history
-    ])
-
-    # Calcul de la baseline au repos et évaluation biomédicale en temps réel
-    baseline = calculate_user_baseline(df, str(current_user.id))
+    # Évaluation biomédicale en temps réel (évalue toujours les garde-fous absolus)
     anomalies = evaluate_telemetry(baseline, data.bpm, data.spo2, data.temperature)
 
-    # Si des anomalies sont détectées, création et stockage de l'alerte
+    # Enregistrement de l'alerte en BDD si des anomalies existent
     if anomalies:
-        anomalies_str = ",".join(anomalies)  # Conversion en str
+        anomalies_str = ",".join(anomalies)
         alert = Alert(
             user_id=current_user.id,
-            sensor_data_id=new_measure.id,  # Clé étrangère vers la mesure enregistrée
+            sensor_data_id=new_measure.id,
             anomalies=anomalies_str,
             is_confirmed=False
         )
         db.add(alert)
         db.commit()
         db.refresh(alert)
-
-    # Retour au client (Boîtier C / Frontend)
+    #  Retour au client
     return TelemetryPushResponse(
         measure=new_measure,
         is_anomaly=len(anomalies) > 0,
         anomalies=anomalies
     )
+
 
 @app.get("/api/v1/telemetry/history", response_model=list[SensorDataResponse])
 def get_telemetry_history(
@@ -228,3 +225,20 @@ def get_telemetry_history(
         .limit(limit)
         .all()
     )
+    
+@app.get("/api/v1/alerts", response_model=list[AlertResponse])
+def get_user_alerts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Récupère l'historique complet des alertes biomédicales du patient connecté, 
+    triées de la plus récente à la plus ancienne.
+    """
+    alerts = (
+        db.query(Alert)
+        .filter(Alert.user_id == current_user.id)
+        .order_by(Alert.recorded_at.desc())
+        .all()
+    )
+    return alerts
+

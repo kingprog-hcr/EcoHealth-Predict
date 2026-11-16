@@ -1,5 +1,6 @@
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
+from typing import Optional
 
 # SCHÉMAS UTILISATEURS 
 
@@ -26,7 +27,7 @@ class UserLogin(BaseModel):
 class SensorDataCreate(BaseModel):
     #user_id: int
     bpm: int
-    spo2: int
+    spo2: float
     temperature: float
     contexte : str =  "rest" 
 
@@ -34,7 +35,7 @@ class SensorDataResponse(BaseModel):
     id: int
     user_id: int
     bpm: int
-    spo2: int
+    spo2: float
     temperature: float
     contexte : str
     recorded_at: datetime
@@ -51,8 +52,8 @@ class AlertResponse(BaseModel):
     id : int
     user_id : int
     sensor_data_id : int
-    anomalies : list[str]
-    is_confirmed : bool | None = None
+    anomalies : str
+    is_confirmed : Optional[bool] = False
     recorded_at : datetime
     
     class Config:
