@@ -70,7 +70,10 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     
     #  Décodage du token
     payload = decode_token(token)
-    if payload is None:
+    if payload is None :
+        raise credentials_exception
+    
+    if payload.get("type") != "access":
         raise credentials_exception
     
     #  Récupération du user_id
